@@ -1,0 +1,90 @@
+- hosts: ubuntu-servers
+  # your remote user name goes here
+  remote_user: ubuntu  
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    php_ini: "/etc/php/7.0/fpm/php.ini"
+    zabbix_repo: "deb http://repo.zabbix.com/zabbix/3.2/ubuntu xenial main"
+    zabbix_key: "https://repo.zabbix.com/zabbix-official-repo.key"
+    zabbix_db: "/usr/share/doc/zabbix-server-mysql/create.sql.gz"
+    nginx_conf: "/etc/nginx/sites-enabled/default"
+    php_options:
+      - { section: 'PHP', option: 'post_max_size', value: '16M' }
+      - { section: 'PHP', option: 'memory_limit', value: '128M' }
+      - { section: 'PHP', option: 'max_execution_time', value: '300' }
+      - { section: 'PHP', option: 'max_input_time', value: '300' }
+      - { section: 'PHP', option: 'upload_max_filesize', value: '2M' }
+      - { section: 'Date', option: 'date.timezone', value: 'Europe/Kiev' }
+
+  tasks:
+    - name: Update APT cache
+      apt: update_cache=yes
+
+    - name: Install web-server, PHP7 with plugins and database
+      apt: name="{{ item }}" state=latest
+      with_items:
+        - nginx
+        - php7.0
+        - php7.0-fpm
+        - php7.0-mysql
+        - php7.0-bcmath
+        - php7.0-xml
+        - php7.0-mbstring
+        - mariadb-server
+
+    - name: Import Zabbix repo key
+      apt_key: url="{{ zabbix_key }}" state=present
+
+    - name: Add Zabbix official repository
+      apt_repository: repo="{{ zabbix_repo }}" state=present
+
+    - name: Install Zabbix server and frontend
+      apt: update_cache=yes name="{{ item }}" state=latest
+      with_items:
+        - zabbix-server-mysql
+        - zabbix-frontend-php
+  
+    - name: Configure nginx to display Zabbix frontend
+      copy: src=nginx.conf dest="{{ nginx_conf }}"
+
+    - name: Configure php.ini
+      ini_file: dest="{{ php_ini }}" backup=yes section="{{ item.section }}" option="{{ item.option }}" value="{{ item.value }}"
+      with_items: "{{ php_options }}"
+
+    - name: Install python-mysqldb module
+      apt: name=python-mysqldb state=latest
+
+    - name: Make sure old Zabbix DB is absent
+      mysql_db: name=zabbix state=absent
+
+    - name: Create database for Zabbix
+      mysql_db: name=zabbix state=present encoding=latin1
+   
+    - name: Grant all priveleges to Zabbix user
+      mysql_user: name=zabbix password=zabbix priv='zabbix.*:ALL,GRANT' state=present
+
+    - name: Flush priveleges in MySQL
+      command: mysql -u root -e "FLUSH PRIVILEGES"
+
+    - name: Decompress Zabbix server DB
+      shell: "zcat {{ zabbix_db }} | mysql --user=zabbix --password=zabbix zabbix"
+
+    - name: Edit zabbix_server configuration file
+      lineinfile: dest=/etc/zabbix/zabbix_server.conf state=present line={{ item }}
+      with_items:
+        - DBHost=localhost
+        - DBName=zabbix
+        - DBUser=zabbix
+        - DBPassword=zabbix
+
+    - name: Restart web services
+      service: name={{ item }} state=restarted
+      with_items:
+        - nginx
+        - php7.0-fpm
+        - zabbix-server
+    
+    - debug:
+        msg: "Now open {{ ansible_host }} in your browser!"
