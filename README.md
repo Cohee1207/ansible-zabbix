@@ -5,7 +5,7 @@
 - Fill *hosts* file
 - Type in shell: 
 ```
-ansible-playbook zabbix-server.yml --ask-become-pass
+ansible-playbook zabbix-server.yml
 ```
 
 ## TODO
